@@ -22,6 +22,7 @@ CREATE TABLE t_radix
     f64_unit Float64,         -- [1, 2): the same sign and exponent
     f64_neg Float64,
     f64_const Float64,
+    f64_int Float64,          -- integers: the low bytes are zero, the exponent differs
     f32_unit Float32,
     bf16_unit BFloat16,
     d64 Decimal64(3),
@@ -42,6 +43,7 @@ SELECT
     1 + (intHash64(number) % 1000000) / 1000000,
     -1 - (intHash64(number) % 1000000) / 1000000,
     1.5,
+    toFloat64(intHash64(number) % 1000000),
     toFloat32(1 + (intHash64(number) % 1000000) / 1000000),
     toBFloat16(1 + (intHash64(number) % 128) / 128),
     toDecimal64(intHash64(number) % 100000000, 3),
@@ -82,6 +84,9 @@ SELECT 'Float64 in (-2, -1]',
 SELECT 'Float64 all equal',
     (SELECT groupArray(x) FROM (SELECT f64_const AS x FROM t_radix ORDER BY x)) = (SELECT arraySort(groupArray(f64_const)) FROM t_radix),
     (SELECT groupArray(x) FROM (SELECT f64_const AS x FROM t_radix ORDER BY x DESC)) = (SELECT arrayReverseSort(groupArray(f64_const)) FROM t_radix);
+SELECT 'Float64 integers',
+    (SELECT groupArray(x) FROM (SELECT f64_int AS x FROM t_radix ORDER BY x)) = (SELECT arraySort(groupArray(f64_int)) FROM t_radix),
+    (SELECT groupArray(x) FROM (SELECT f64_int AS x FROM t_radix ORDER BY x DESC)) = (SELECT arrayReverseSort(groupArray(f64_int)) FROM t_radix);
 SELECT 'Float32 in [1, 2)',
     (SELECT groupArray(x) FROM (SELECT f32_unit AS x FROM t_radix ORDER BY x)) = (SELECT arraySort(groupArray(f32_unit)) FROM t_radix),
     (SELECT groupArray(x) FROM (SELECT f32_unit AS x FROM t_radix ORDER BY x DESC)) = (SELECT arrayReverseSort(groupArray(f32_unit)) FROM t_radix);
@@ -143,6 +148,7 @@ SELECT 'Int64 small negative', groupArraySorted(2000000)(i64_neg) = arraySort(gr
 SELECT 'Float64 in [1, 2)', groupArraySorted(2000000)(f64_unit) = arraySort(groupArray(f64_unit)) FROM t_radix;
 SELECT 'Float64 in (-2, -1]', groupArraySorted(2000000)(f64_neg) = arraySort(groupArray(f64_neg)) FROM t_radix;
 SELECT 'Float64 all equal', groupArraySorted(2000000)(f64_const) = arraySort(groupArray(f64_const)) FROM t_radix;
+SELECT 'Float64 integers', groupArraySorted(2000000)(f64_int) = arraySort(groupArray(f64_int)) FROM t_radix;
 SELECT 'Float32 in [1, 2)', groupArraySorted(2000000)(f32_unit) = arraySort(groupArray(f32_unit)) FROM t_radix;
 SELECT 'BFloat16 in [1, 2)', groupArraySorted(2000000)(bf16_unit) = arraySort(groupArray(bf16_unit)) FROM t_radix;
 SELECT 'Int128', groupArraySorted(2000000)(toInt128(i64_neg)) = arraySort(groupArray(toInt128(i64_neg))) FROM t_radix;

@@ -9,6 +9,7 @@ Int64 small negative	1	1
 Float64 in [1, 2)	1	1
 Float64 in (-2, -1]	1	1
 Float64 all equal	1	1
+Float64 integers	1	1
 Float32 in [1, 2)	1	1
 BFloat16 in [1, 2)	1	1
 Decimal64	1	1
@@ -29,6 +30,7 @@ Int64 small negative	1
 Float64 in [1, 2)	1
 Float64 in (-2, -1]	1
 Float64 all equal	1
+Float64 integers	1
 Float32 in [1, 2)	1
 BFloat16 in [1, 2)	1
 Int128	1

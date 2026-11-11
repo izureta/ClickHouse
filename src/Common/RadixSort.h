@@ -252,177 +252,82 @@ private:
         }
     }
 
-    /// The rest of LSD radix sort, when some passes can be skipped: all elements have the same value of the bit range
-    /// (e.g. small numbers, close dates, integers stored as Float64), so the pass does not change the order.
-    /// It is a separate function: a `continue` in the pass loop of `radixSortLSDInternalImpl` prevents unrolling of that loop
-    /// and makes the sort of small arrays slower.
+    /// If some passes are trivial (all elements have the same value of the bit range, so the bucket of the first element
+    /// is the whole array), does the passes of `radixSortLSDInternalImpl` without them and returns true.
     template <bool DIRECT_WRITE_TO_DESTINATION, bool SOFTWARE_PREFETCH>
-    static NO_INLINE void radixSortLSDSkipTrivialPasses(
-        Element * arr, Element * swap_buffer, size_t size, bool reverse, Result * destination, CountType * histograms, const bool * is_pass_trivial)
-    {
-        /// The passes alternate the buffers. Trivial passes are skipped, so it is tracked at runtime where the data is.
-        bool data_in_swap_buffer = false;
-
-        /// Move the elements in the order starting from the least bit piece, and then do a few passes on the number of pieces.
-        for (size_t pass = 0; pass < NUM_PASSES - DIRECT_WRITE_TO_DESTINATION; ++pass)
-        {
-            if (is_pass_trivial[pass])
-                continue;
-
-            Element * writer = data_in_swap_buffer ? arr : swap_buffer;
-            Element * reader = data_in_swap_buffer ? swap_buffer : arr;
-            data_in_swap_buffer = !data_in_swap_buffer;
-
-            size_t unrolled_end = (size / UNROLL_DISTANCE * UNROLL_DISTANCE);
-
-            size_t i = 0;
-            /// Unrolling allows for vectorized code, but prefetching disables it
-            if constexpr (!SOFTWARE_PREFETCH && UNROLL_DISTANCE >= 2)
-            {
-                for (; i < unrolled_end; i += UNROLL_DISTANCE)
-                {
-                    size_t positions[UNROLL_DISTANCE];
-
-                    for (size_t p = 0; p < UNROLL_DISTANCE; p++)
-                        positions[p] = static_cast<size_t>(extractPart(pass, reader[i + p]));
-
-                    for (size_t p = 0; p < UNROLL_DISTANCE; p++)
-                    {
-                        auto element = reader[i + p];
-
-                        /// Place the element on the next free position.
-                        auto & dest = writer[histograms[pass * HISTOGRAM_SIZE + positions[p]]];
-                        ++histograms[pass * HISTOGRAM_SIZE + positions[p]];
-                        dest = element;
-
-                        /// On the last pass, we do the reverse transformation.
-                        if (!Traits::Transform::transform_is_simple && pass == NUM_PASSES - 1)
-                            Traits::extractKey(dest) = bitsToKey(Traits::Transform::backward(keyToBits(Traits::extractKey(element))));
-                    }
-                }
-            }
-
-            for (; i < size; i++)
-            {
-                auto element = reader[i];
-                auto pos = static_cast<size_t>(extractPart(pass, element));
-
-                if constexpr (SOFTWARE_PREFETCH)
-                {
-                    /// Note that for prefetch to be effective, the distance must be large enough so that the memory access is ready
-                    /// when we actually need it. This depends on CPU and memory subsystem.
-                    if (i + PREFETCH_DISTANCE < size) [[likely]]
-                    {
-                        auto next_pos = static_cast<size_t>(extractPart(pass, reader[i + PREFETCH_DISTANCE]));
-                        __builtin_prefetch(&writer[histograms[pass * HISTOGRAM_SIZE + next_pos]], 1);
-                    }
-                }
-
-                /// Place the element on the next free position.
-                auto & dest = writer[histograms[pass * HISTOGRAM_SIZE + pos]];
-                ++histograms[pass * HISTOGRAM_SIZE + pos];
-                dest = element;
-
-                /// On the last pass, we do the reverse transformation.
-                if (!Traits::Transform::transform_is_simple && pass == NUM_PASSES - 1)
-                    Traits::extractKey(dest) = bitsToKey(Traits::Transform::backward(keyToBits(Traits::extractKey(element))));
-            }
-        }
-
-        if (DIRECT_WRITE_TO_DESTINATION)
-        {
-            constexpr size_t pass = NUM_PASSES - 1;
-            Result * writer = destination;
-            Element * reader = data_in_swap_buffer ? swap_buffer : arr;
-
-            if (is_pass_trivial[pass])
-            {
-                /// The elements are already in order.
-                for (size_t i = 0; i < size; ++i)
-                    writer[reverse ? size - 1 - i : i] = Traits::extractResult(reader[i]);
-            }
-            else if (reverse)
-            {
-                for (size_t i = 0; i < size; ++i)
-                {
-                    auto element = reader[i];
-                    auto pos = static_cast<size_t>(extractPart(pass, element));
-                    if constexpr (SOFTWARE_PREFETCH)
-                    {
-                        if (i + PREFETCH_DISTANCE < size) [[likely]]
-                        {
-                            auto next_pos = static_cast<size_t>(extractPart(pass, reader[i + PREFETCH_DISTANCE]));
-                            __builtin_prefetch(&writer[size - 1 - histograms[pass * HISTOGRAM_SIZE + next_pos]], 1);
-                        }
-                    }
-                    writer[size - 1 - (histograms[pass * HISTOGRAM_SIZE + pos])] = Traits::extractResult(element);
-                    ++histograms[pass * HISTOGRAM_SIZE + pos];
-                }
-            }
-            else
-            {
-                for (size_t i = 0; i < size; ++i)
-                {
-                    auto element = reader[i];
-                    auto pos = static_cast<size_t>(extractPart(pass, element));
-                    if constexpr (SOFTWARE_PREFETCH)
-                    {
-                        if (i + PREFETCH_DISTANCE < size)
-                        {
-                            auto next_pos = static_cast<size_t>(extractPart(pass, reader[i + PREFETCH_DISTANCE]));
-                            __builtin_prefetch(&writer[histograms[pass * HISTOGRAM_SIZE + next_pos]], 1);
-                        }
-                    }
-                    writer[histograms[pass * HISTOGRAM_SIZE + pos]] = Traits::extractResult(element);
-                    ++histograms[pass * HISTOGRAM_SIZE + pos];
-                }
-            }
-        }
-        else
-        {
-            /// If the result array is in a temporary buffer, copy it to the place of the original array.
-            if (data_in_swap_buffer)
-                memcpy(arr, swap_buffer, size * sizeof(Element));
-
-            /// The reverse transformation is done on the last pass. If it was skipped, do it here.
-            if (!Traits::Transform::transform_is_simple && is_pass_trivial[NUM_PASSES - 1])
-                for (size_t i = 0; i < size; ++i)
-                    Traits::extractKey(arr[i]) = bitsToKey(Traits::Transform::backward(keyToBits(Traits::extractKey(arr[i]))));
-
-            /// TODO This is suboptimal, we can embed it to the last pass.
-            if (reverse)
-                std::reverse(arr, arr + size);
-        }
-    }
-
-    /// Small arrays are sorted by the instantiation without the check, which has the same code as the sort without skipping.
-    /// Any code added to it, even unreachable, changes the code layout and makes the sort of small arrays slower by a few percent.
-    static constexpr size_t MIN_SIZE_TO_SKIP_TRIVIAL_PASSES = 512;
-
-    /// Returns false if no pass can be skipped. Otherwise sorts the array, skipping the trivial passes, and returns true.
-    /// A pass is trivial if all elements have the same value of its bit range: the range of positions of the first
-    /// element's bucket is the whole array. It is called after the prefix sums, because reading the histograms
-    /// before them makes the common path slower.
-    template <bool DIRECT_WRITE_TO_DESTINATION, bool SOFTWARE_PREFETCH>
-    static NO_INLINE bool radixSortLSDTrySkipTrivialPasses(
+    static NO_INLINE bool radixSortLSDSkipTrivialPasses(
         Element * arr, Element * swap_buffer, size_t size, bool reverse, Result * destination, CountType * histograms)
     {
-        bool is_pass_trivial[NUM_PASSES] = {};
+        bool is_pass_trivial[NUM_PASSES];
         bool has_trivial_pass = false;
         for (size_t pass = 0; pass < NUM_PASSES; ++pass)
         {
             const CountType * offsets = &histograms[pass * HISTOGRAM_SIZE];
             const size_t digit = static_cast<size_t>(extractPart(pass, arr[0]));
-            const size_t bucket_end = digit + 1 < HISTOGRAM_SIZE ? offsets[digit + 1] : size;
-            is_pass_trivial[pass] = offsets[digit] == 0 && bucket_end == size;
+            is_pass_trivial[pass] = offsets[digit] == 0 && (digit + 1 == HISTOGRAM_SIZE || offsets[digit + 1] == size);
             has_trivial_pass |= is_pass_trivial[pass];
         }
-
         if (!has_trivial_pass)
             return false;
 
-        radixSortLSDSkipTrivialPasses<DIRECT_WRITE_TO_DESTINATION, SOFTWARE_PREFETCH>(
-            arr, swap_buffer, size, reverse, destination, histograms, is_pass_trivial);
+        Element * reader = arr;
+        Element * writer = swap_buffer;
+        for (size_t pass = 0; pass < NUM_PASSES - DIRECT_WRITE_TO_DESTINATION; ++pass)
+        {
+            if (is_pass_trivial[pass])
+                continue;
+            CountType * offsets = &histograms[pass * HISTOGRAM_SIZE];
+            /// On the last pass, we do the reverse transformation.
+            const bool transform_back = !Traits::Transform::transform_is_simple && pass == NUM_PASSES - 1;
+            size_t i = 0;
+            /// Unrolling allows for vectorized code.
+            for (; UNROLL_DISTANCE >= 2 && i < size / UNROLL_DISTANCE * UNROLL_DISTANCE; i += UNROLL_DISTANCE)
+            {
+                size_t positions[UNROLL_DISTANCE];
+                for (size_t p = 0; p < UNROLL_DISTANCE; ++p)
+                    positions[p] = static_cast<size_t>(extractPart(pass, reader[i + p]));
+                for (size_t p = 0; p < UNROLL_DISTANCE; ++p)
+                {
+                    auto & dest = writer[offsets[positions[p]]++];
+                    dest = reader[i + p];
+                    if (transform_back)
+                        Traits::extractKey(dest) = bitsToKey(Traits::Transform::backward(keyToBits(Traits::extractKey(dest))));
+                }
+            }
+            for (; i < size; ++i)
+            {
+                auto & dest = writer[offsets[static_cast<size_t>(extractPart(pass, reader[i]))]++];
+                dest = reader[i];
+                if (transform_back)
+                    Traits::extractKey(dest) = bitsToKey(Traits::Transform::backward(keyToBits(Traits::extractKey(dest))));
+            }
+            std::swap(reader, writer);
+        }
+
+        if constexpr (DIRECT_WRITE_TO_DESTINATION)
+        {
+            constexpr size_t pass = NUM_PASSES - 1;
+            CountType * offsets = &histograms[pass * HISTOGRAM_SIZE];
+            if (is_pass_trivial[pass])
+                for (size_t i = 0; i < size; ++i)
+                    destination[reverse ? size - 1 - i : i] = Traits::extractResult(reader[i]);
+            else if (reverse)
+                for (size_t i = 0; i < size; ++i)
+                    destination[size - 1 - offsets[static_cast<size_t>(extractPart(pass, reader[i]))]++] = Traits::extractResult(reader[i]);
+            else
+                for (size_t i = 0; i < size; ++i)
+                    destination[offsets[static_cast<size_t>(extractPart(pass, reader[i]))]++] = Traits::extractResult(reader[i]);
+        }
+        else
+        {
+            if (reader != arr)
+                memcpy(arr, reader, size * sizeof(Element));
+            if (!Traits::Transform::transform_is_simple && is_pass_trivial[NUM_PASSES - 1])
+                for (size_t i = 0; i < size; ++i)
+                    Traits::extractKey(arr[i]) = bitsToKey(Traits::Transform::backward(keyToBits(Traits::extractKey(arr[i]))));
+            if (reverse)
+                std::reverse(arr, arr + size);
+        }
         return true;
     }
 
@@ -432,8 +337,8 @@ private:
     template <bool DIRECT_WRITE_TO_DESTINATION, bool SOFTWARE_PREFETCH>
     static ALWAYS_INLINE void radixSortLSDInternal(Element * arr, size_t size, bool reverse, Result * destination)
     {
-        /// See `MIN_SIZE_TO_SKIP_TRIVIAL_PASSES`.
-        if (size >= MIN_SIZE_TO_SKIP_TRIVIAL_PASSES)
+        /// For small arrays the check would cost more than it saves.
+        if (size >= 512)
             radixSortLSDInternalImpl<DIRECT_WRITE_TO_DESTINATION, SOFTWARE_PREFETCH, true>(arr, size, reverse, destination);
         else
             radixSortLSDInternalImpl<DIRECT_WRITE_TO_DESTINATION, SOFTWARE_PREFETCH, false>(arr, size, reverse, destination);
@@ -480,16 +385,12 @@ private:
             }
         }
 
-        /// Skip the passes where all elements have the same value of the bit range (e.g. small numbers, close dates,
-        /// integers stored as Float64). The code is in separate functions, see `radixSortLSDSkipTrivialPasses`.
-        if constexpr (SKIP_TRIVIAL_PASSES)
+        /// Skip the passes where all elements have the same value of the bit range (e.g. small numbers, close dates).
+        if (SKIP_TRIVIAL_PASSES && radixSortLSDSkipTrivialPasses<DIRECT_WRITE_TO_DESTINATION, SOFTWARE_PREFETCH>(
+                arr, swap_buffer, size, reverse, destination, histograms.get()))
         {
-            if (radixSortLSDTrySkipTrivialPasses<DIRECT_WRITE_TO_DESTINATION, SOFTWARE_PREFETCH>(
-                    arr, swap_buffer, size, reverse, destination, histograms.get()))
-            {
-                allocator.deallocate(swap_buffer, size);
-                return;
-            }
+            allocator.deallocate(swap_buffer, size);
+            return;
         }
 
         /// Move the elements in the order starting from the least bit piece, and then do a few passes on the number of pieces.
