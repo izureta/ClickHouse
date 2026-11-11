@@ -1,0 +1,38 @@
+<test>
+    <!-- LSD radix sort skips the passes where all keys have the same byte. -->
+    <settings>
+        <max_threads>1</max_threads>
+    </settings>
+
+    <create_query>CREATE TABLE radix_u64_small (key UInt64) ENGINE = Memory</create_query>
+    <create_query>CREATE TABLE radix_i64_small (key Int64) ENGINE = Memory</create_query>
+    <create_query>CREATE TABLE radix_datetime64 (key DateTime64(3)) ENGINE = Memory</create_query>
+    <create_query>CREATE TABLE radix_decimal64 (key Decimal64(2)) ENGINE = Memory</create_query>
+    <create_query>CREATE TABLE radix_f64_unit (key Float64) ENGINE = Memory</create_query>
+
+    <!-- UInt32 values in UInt64: 4 trivial passes. -->
+    <fill_query>INSERT INTO radix_u64_small SELECT rand32() FROM numbers(10000000)</fill_query>
+    <!-- Small positive Int64: 5 trivial passes. -->
+    <fill_query>INSERT INTO radix_i64_small SELECT rand32() % 10000000 FROM numbers(10000000)</fill_query>
+    <!-- Timestamps with milliseconds from one day: 4 trivial passes. -->
+    <fill_query>INSERT INTO radix_datetime64 SELECT fromUnixTimestamp64Milli(toInt64(1767225600000 + rand64() % 86400000)) FROM numbers(10000000)</fill_query>
+    <!-- Prices up to 10^6 with cents: 4 trivial passes. -->
+    <fill_query>INSERT INTO radix_decimal64 SELECT toDecimal64(rand32() % 100000000, 2) / 100 FROM numbers(10000000)</fill_query>
+    <!-- Floats with the same sign and exponent: 1 trivial pass. -->
+    <fill_query>INSERT INTO radix_f64_unit SELECT 1 + rand64() / 18446744073709551616 FROM numbers(10000000)</fill_query>
+
+    <query>SELECT key FROM radix_u64_small ORDER BY key FORMAT Null</query>
+    <query>SELECT key FROM radix_u64_small ORDER BY key DESC FORMAT Null</query>
+    <query>SELECT key FROM radix_i64_small ORDER BY key FORMAT Null</query>
+    <query>SELECT key FROM radix_datetime64 ORDER BY key FORMAT Null</query>
+    <query>SELECT key FROM radix_decimal64 ORDER BY key FORMAT Null</query>
+    <query>SELECT key FROM radix_f64_unit ORDER BY key FORMAT Null</query>
+
+    <query>SELECT length(groupArraySorted(10000000)(key)) FROM radix_u64_small</query>
+
+    <drop_query>DROP TABLE IF EXISTS radix_u64_small</drop_query>
+    <drop_query>DROP TABLE IF EXISTS radix_i64_small</drop_query>
+    <drop_query>DROP TABLE IF EXISTS radix_datetime64</drop_query>
+    <drop_query>DROP TABLE IF EXISTS radix_decimal64</drop_query>
+    <drop_query>DROP TABLE IF EXISTS radix_f64_unit</drop_query>
+</test>

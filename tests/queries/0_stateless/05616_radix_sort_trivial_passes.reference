@@ -1,0 +1,47 @@
+-- ORDER BY: ascending, descending
+UInt64 < 2^32	1	1
+UInt64 constant low byte	1	1
+UInt64 all equal	1	1
+UInt32 < 2^16	1	1
+UInt16 constant low byte	1	1
+Int64 small positive	1	1
+Int64 small negative	1	1
+Float64 in [1, 2)	1	1
+Float64 in (-2, -1]	1	1
+Float64 all equal	1	1
+Float32 in [1, 2)	1	1
+BFloat16 in [1, 2)	1	1
+Decimal64	1	1
+DateTime	1	1
+DateTime64	1	1
+Nullable(UInt64)	1	1
+-- ORDER BY of several columns: radix sort of the equal ranges of the first column
+UInt64 < 2^32	1
+DateTime64 descending	1
+Float64 in [1, 2)	1
+-- Stable sort on INSERT into MergeTree: the equal keys keep the order of insertion
+Int64 < 1000	0	10000
+DateTime64 within a second	0	10000
+UInt64 constant within ranges	0	10000
+-- groupArraySorted
+UInt64 < 2^32	1
+Int64 small negative	1
+Float64 in [1, 2)	1
+Float64 in (-2, -1]	1
+Float64 all equal	1
+Float32 in [1, 2)	1
+BFloat16 in [1, 2)	1
+Int128	1
+UInt256	1
+only NaN	1000	1
+-- quantilesGK keeps the minimum and the maximum
+UInt64 < 2^32	1
+Float64 in [1, 2)	1
+Float64 in (-2, -1]	1
+-- quantileTDigest
+Float64 all equal	1.5
+Float64 in [1, 2)	1
+Float64 in (-2, -1]	1
+-- ASOF JOIN with more than 256 rows for a key
+UInt64	1400	1400	1400
+DateTime64	1400	1400
